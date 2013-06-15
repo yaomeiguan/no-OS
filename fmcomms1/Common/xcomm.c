@@ -279,9 +279,11 @@ int32_t XCOMM_InitTx(XCOMM_DefaultInit* pDefInit)
 	/* Initialize the AD9122 */
     DAC_Core_Init(pDefInit->fmcPort);
     if(ad9122_setup(ad9523_out_altvoltage_DAC_DCO_CLK_frequency,
-    				ad9523_out_altvoltage_DAC_CLK_frequency,
-    				ad9523_clk_round_rate_DAC_DCO_CLK,
-    				ad9523_clk_round_rate_DAC_CLK) < 0)
+                    ad9523_out_altvoltage_DAC_CLK_frequency,
+                    ad9523_out_altvoltage_DAC_REF_CLK_frequency,
+                    ad9523_clk_round_rate_DAC_DCO_CLK,
+                    ad9523_clk_round_rate_DAC_CLK,
+                    ad9523_clk_round_rate_DAC_REF_CLK) < 0)
         return -1;
 
     /* Set the AD9122 sampling rate */
@@ -1146,4 +1148,50 @@ XCOMM_DacIQCorrection XCOMM_GetDacIqCorrection(XCOMM_ReadMode readMode)
 int32_t XCOMM_CalibrateDacDci(void)
 {
 	return ad9122_dci_calibrate();
+}
+
+/**************************************************************************//**
+* @brief Gets the DAC FIFO Status.
+*
+* @return If success, return XCOMM_DacFifoStatus struct with error set to 0
+*         If error, return XCOMM_DacFifoStatus struct with error set to -1
+******************************************************************************/
+XCOMM_DacFifoStatus XCOMM_GetDacFifoStatus(void)
+{
+	XCOMM_DacFifoStatus status;
+	int32_t ret     = 0;
+	uint8_t status1 = 0;
+	uint8_t status2 = 0;
+
+	ret = ad9122_get_fifo_status_regs(&status1, &status2);
+	if(ret < 0)
+	{
+		status.error = -1;
+	}
+	else
+	{
+		status.error = 0;
+	}
+	status.warning1     = ((status1 & 0x80) >> 7);
+	status.warning2     = ((status1 & 0x40) >> 6);
+	status.softAlignAck = ((status1 & 0x04) >> 2);
+	status.softAlignReq = ((status1 & 0x02) >> 1);
+	status.level        = status2;
+
+	return status;
+}
+
+/**************************************************************************//**
+* @brief Sets the DAC input data format.
+*
+* @param format - The input data format.
+*    Example: TWOS_COMPLEMENT_FORMAT - input data is in twos complement format.
+*             BINARY_FORMAT - input data is in binary format.
+*
+* @return Returns negative error code in case of error or the set
+ *         input data format.
+******************************************************************************/
+int32_t XCOMM_SetDacDataFormat(uint8_t dataFormat)
+{
+	return ad9122_set_data_format(dataFormat);
 }

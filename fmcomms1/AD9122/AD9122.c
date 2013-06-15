@@ -54,8 +54,10 @@ extern void delay_us(uint32_t us_count);
 
 int64_t (*pfnSetDataClk)(int64_t Hz);
 int64_t (*pfnSetDacClk)(int64_t Hz);
+int64_t (*pfnSetRefClk)(int64_t Hz);
 uint32_t (*pfnRoundRateDataClk)(int32_t rate);
 uint32_t (*pfnRoundRateDacClk)(int32_t rate);
+uint32_t (*pfnRoundRateRefClk)(int32_t rate);
 
 /******************************************************************************/
 /***************************** Local Types and Variables***********************/
@@ -359,11 +361,15 @@ int32_t ad9122_get_fifo_status(struct cf_axi_converter *conv)
 {
 	uint32_t stat;
 
+	stat = ad9122_read(AD9122_REG_SYNC_STATUS_1);
+	if (!(stat & AD9122_SYNC_STATUS_1_SYNC_LOCKED))
+		return -1;
+
 	stat = ad9122_read(AD9122_REG_FIFO_STATUS_1);
 	if (stat & (AD9122_FIFO_STATUS_1_FIFO_WARNING_1 |
-		AD9122_FIFO_STATUS_1_FIFO_WARNING_2)) {
+				AD9122_FIFO_STATUS_1_FIFO_WARNING_2))
 		return -1;
-	}
+
 	return 0;
 }
 
@@ -484,7 +490,7 @@ static void ad9122_update_avail_fcent_modes(struct cf_axi_converter *conv,
 static int32_t ad9122_set_data_clk(struct cf_axi_converter *conv, uint32_t freq)
 {
 	uint32_t dac_freq;
-	int32_t dat_freq, r_dac_freq;
+	int32_t dat_freq, r_dac_freq, r_ref_freq;
 	int64_t ret;
 
 	dat_freq = pfnRoundRateDataClk(freq);
@@ -514,10 +520,24 @@ static int32_t ad9122_set_data_clk(struct cf_axi_converter *conv, uint32_t freq)
 		return -1;
 	}
 
+	r_ref_freq = pfnRoundRateRefClk(dat_freq / 8);
+	if (r_ref_freq != (dat_freq / 8)) {
+#ifdef CLK_DEBUG
+		xil_printf("CLK_REF: Requested Rate exceeds mismatch %ld (%lu)",
+				r_ref_freq, (dat_freq / 8));
+#endif
+		return -1;
+	}
+
 	ret = pfnSetDataClk(dat_freq);
 	if(ret < 0)
 		return (int32_t)ret;
 	conv->clk[CLK_DATA] = (uint32_t)ret;
+
+	ret = pfnSetRefClk(r_ref_freq);
+	if(ret < 0)
+		return (int32_t)ret;
+	conv->clk[CLK_REF] = (uint32_t)ret;
 
 	ret = pfnSetDacClk(dac_freq);
 	if(ret < 0)
@@ -878,7 +898,9 @@ int32_t ad9122_read_raw(uint32_t channel,
 	struct cf_axi_converter *conv = &dds_conv;
 	uint32_t rate;
 	int32_t ret;
+	uint32_t ctrl_reg;
 
+	DAC_Core_Read(CF_AXI_DDS_CTRL, &ctrl_reg);
 	switch (mask) {
 	case IIO_CHAN_INFO_SAMP_FREQ:
 		rate = ad9122_get_data_clk(conv);
@@ -894,6 +916,7 @@ int32_t ad9122_read_raw(uint32_t channel,
 	default:
 		return -1;
 	}
+	DAC_Core_Write(CF_AXI_DDS_CTRL, ctrl_reg);
 
 	return ret;
 }
@@ -910,8 +933,12 @@ int32_t ad9122_read_raw(uint32_t channel,
  *
  * @return Returns negative error code or 0 in case of success.
 *******************************************************************************/
-int32_t ad9122_setup(void* pfnSetDataClock, void* pfnSetDacClock,
-					 void* pfnRoundRateDataClock, void* pfnRoundRateDacClock)
+int32_t ad9122_setup(void* pfnSetDataClock,
+                     void* pfnSetDacClock,
+                     void* pfnSetRefClock,
+                     void* pfnRoundRateDataClock,
+                     void* pfnRoundRateDacClock,
+                     void* pfnRoundRateRefClock)
 {
 	int32_t ret;
 	int32_t i;
@@ -923,8 +950,10 @@ int32_t ad9122_setup(void* pfnSetDataClock, void* pfnSetDacClock,
 
 	pfnSetDataClk = pfnSetDataClock;
 	pfnSetDacClk  = pfnSetDacClock;
+	pfnSetRefClk  = pfnSetRefClock;
 	pfnRoundRateDataClk = pfnRoundRateDataClock;
 	pfnRoundRateDacClk  = pfnRoundRateDacClock;
+	pfnRoundRateRefClk  = pfnRoundRateRefClock;
 
 	conv->write 		= ad9122_write;
 	conv->read 			= ad9122_read;
@@ -1404,3 +1433,79 @@ int32_t ad9122_phaseAdj_Q_DAC(int32_t phaseAdj)
 	return phaseAdj;
 }
 
+/***************************************************************************//**
+ * @brief Gets the AD9122 FIFO status registers.
+ *
+ * @param status1 - AD9122_REG_FIFO_STATUS_1 value.
+ * @param status2 - AD9122_REG_FIFO_STATUS_2 value.
+ *
+ * @return Returns negative error code in case of error
+ * 		   or 0 in case of success.
+*******************************************************************************/
+int32_t ad9122_get_fifo_status_regs(uint8_t *status1,
+									uint8_t *status2)
+{
+	int32_t ret = 0;
+
+	ret = ad9122_read(AD9122_REG_FIFO_STATUS_1);
+	if (ret < 0)
+	{
+		return ret;
+	}
+	else
+	{
+		*status1 = (uint8_t)ret;
+	}
+	ret = ad9122_read(AD9122_REG_FIFO_STATUS_2);
+	if (ret < 0)
+	{
+		return ret;
+	}
+	else
+	{
+		*status2 = (uint8_t)ret;
+	}
+
+	return 0;
+}
+
+/***************************************************************************//**
+ * @brief Sets the input data format.
+ *
+ * @param format - The input data format.
+ * 					Example: 0 - input data is in twos complement format.
+ * 						     1 - input data is in binary format.
+ *
+ * @return Returns negative error code in case of error or the set
+ *         input data format.
+*******************************************************************************/
+int32_t ad9122_set_data_format(uint8_t format)
+{
+	int32_t ret       = 0;
+	uint8_t reg_value = 0;
+
+	/* Read the current state of the AD9122_REG_DATA_FORMAT*/
+	ret = ad9122_read(AD9122_REG_DATA_FORMAT);
+	if(ret < 0)
+	{
+		return -1;
+	}
+	reg_value = (uint8_t)ret;
+
+	if((format == 0) || (format == 1))
+	{
+		reg_value &= ~AD9122_DATA_FORMAT_BINARY;
+		reg_value |= AD9122_DATA_FORMAT_BINARY * format;
+		ret = ad9122_write(AD9122_REG_DATA_FORMAT, reg_value);
+		if(ret < 0)
+		{
+			return -1;
+		}
+	}
+	else
+	{
+		format = (reg_value & AD9122_DATA_FORMAT_BINARY) >> 7;
+	}
+
+	return format;
+}

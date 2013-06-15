@@ -132,6 +132,21 @@ typedef struct
 
 typedef XCOMM_TxIQCorrection XCOMM_DacIQCorrection;
 
+/* DAC FIFO Status Definitions */
+typedef struct
+{
+	int8_t		warning1;
+	int8_t		warning2;
+	int8_t		softAlignAck;
+	int8_t		softAlignReq;
+	int8_t		level;
+	int8_t		error;
+}XCOMM_DacFifoStatus;
+
+/* DAC input data format definitions */
+#define TWOS_COMPLEMENT_FORMAT	0
+#define BINARY_FORMAT			1
+
 /** XCOMM Default Initialization Structure */
 typedef struct 
 {	
@@ -367,6 +382,16 @@ XCOMM_DacIQCorrection XCOMM_GetDacIqCorrection(XCOMM_ReadMode readMode);
 /*  ** if success, returns 0 */
 /*  ** if error,return -1 */
 int32_t XCOMM_CalibrateDacDci(void);
+
+/** Gets the DAC FIFO Status. */
+/*  ** if success, return XCOMM_DacFifoStatus with error set to 0*/
+/*  ** if error, return XCOMM_DacFifoStatus with error set to -1 */
+XCOMM_DacFifoStatus XCOMM_GetDacFifoStatus(void);
+
+/** Sets the DAC input data format. */
+/*  if success, return the set input data format.*/
+/*  if error, return -1 */
+int32_t XCOMM_SetDacDataFormat(uint8_t dataFormat);
 
 #endif /* __XCOMM_H__ */
 
